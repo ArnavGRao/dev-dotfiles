@@ -14,6 +14,7 @@ cat << 'EOF' > "$HOME/.config/git/ignore"
 .github/prompts/
 AGENTS.md
 CLAUDE.md
+.agent/
 .agents/
 .claude/
 .trail/
@@ -27,20 +28,28 @@ git config --global core.excludesfile "$HOME/.config/git/ignore"
 # Copies all Ponytail and Caveman sub-skill folders into global agent paths
 # and enforces default active state configs where supported.
 # ------------------------------------------------------------------------------
-mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.config/caveman"
+mkdir -p "$HOME/.agent/skills" "$HOME/.agents/skills" "$HOME/.claude/skills" "$HOME/.config/caveman"
 
-if [ -d "$DOTFILES_DIR/instructions/skills/ponytail" ]; then
-  cp -r "$DOTFILES_DIR/instructions/skills/ponytail/"* "$HOME/.agents/skills/" 2>/dev/null || true
-  cp -r "$DOTFILES_DIR/instructions/skills/ponytail/"* "$HOME/.claude/skills/" 2>/dev/null || true
-fi
+# Helper function to copy skills without accidental double-nesting
+deploy_skills() {
+  local src="$1"
+  local dest="$2"
+  if [ -d "$src" ]; then
+    # If the source folder itself contains a 'skills' subfolder, copy from inside it
+    if [ -d "$src/skills" ]; then
+      cp -r "$src/skills/"* "$dest/" 2>/dev/null || true
+    else
+      cp -r "$src/"* "$dest/" 2>/dev/null || true
+    fi
+  fi
+}
 
-if [ -d "$DOTFILES_DIR/instructions/skills/caveman" ]; then
-  cp -r "$DOTFILES_DIR/instructions/skills/caveman/"* "$HOME/.agents/skills/" 2>/dev/null || true
-  cp -r "$DOTFILES_DIR/instructions/skills/caveman/"* "$HOME/.claude/skills/" 2>/dev/null || true
-fi
+deploy_skills "$DOTFILES_DIR/instructions/skills/ponytail" "$HOME/.agent/skills"
+deploy_skills "$DOTFILES_DIR/instructions/skills/caveman"  "$HOME/.agent/skills"
 
-# Remove top-level plugin.json if copied from skills root so only skill directories remain
-rm -f "$HOME/.agents/skills/plugin.json" "$HOME/.claude/skills/plugin.json"
+# Mirror to plural and claude paths
+cp -r "$HOME/.agent/skills/"* "$HOME/.agents/skills/" 2>/dev/null || true
+cp -r "$HOME/.agent/skills/"* "$HOME/.claude/skills/" 2>/dev/null || true
 
 # Force Caveman default mode configuration
 cat << 'EOF' > "$HOME/.config/caveman/config.json"
@@ -124,8 +133,9 @@ fi
 for ws in /workspaces/*; do
   if [ -d "$ws" ] && [ "$(basename "$ws")" != "dotfiles" ] && [ "$(basename "$ws")" != "dev-dotfiles" ]; then
 
-    # A. Inject Always-On Base Instructions (Ponytail + Caveman Master Rules)
-    mkdir -p "$ws/.github"
+    # A. Inject Instructions for Copilot and Agent Roots
+    mkdir -p "$ws/.github" "$ws/.agent/skills" "$ws/.agents/skills"
+
     if [ -f "$DOTFILES_DIR/instructions/copilot-instructions.md" ]; then
       cp "$DOTFILES_DIR/instructions/copilot-instructions.md" "$ws/.github/copilot-instructions.md"
     fi
@@ -133,17 +143,20 @@ for ws in /workspaces/*; do
       cp "$DOTFILES_DIR/instructions/AGENTS.md" "$ws/AGENTS.md"
     fi
 
-    # B. Bonus: Convert all sub-skills into native GitHub Copilot `/` prompts
-    # Allows invoking `/ponytail-review`, `/ultracave`, `/caveman-commit`, etc. in Copilot Chat
+    # B. Copy skills directly into workspace for Antigravity discovery
+    cp -r "$HOME/.agent/skills/"* "$ws/.agent/skills/" 2>/dev/null || true
+    cp -r "$HOME/.agent/skills/"* "$ws/.agents/skills/" 2>/dev/null || true
+
+    # C. Convert all sub-skills into native Copilot `/` prompts
     mkdir -p "$ws/.github/prompts"
-    for skill_dir in "$HOME/.agents/skills/"*; do
+    for skill_dir in "$HOME/.agent/skills/"*; do
       if [ -d "$skill_dir" ] && [ -f "$skill_dir/SKILL.md" ]; then
         skill_name="$(basename "$skill_dir")"
         cp "$skill_dir/SKILL.md" "$ws/.github/prompts/${skill_name}.prompt.md"
       fi
     done
 
-    # C. Initialize Trail-Code (Graft) Tree-Sitter Code Map in the workspace
+    # D. Initialize Trail-Code (Graft)
     if command -v trail &> /dev/null; then
       (cd "$ws" && trail init --yes &>/dev/null || trail build &>/dev/null || true)
     fi
