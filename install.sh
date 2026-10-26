@@ -55,33 +55,67 @@ EOF
 # ------------------------------------------------------------------------------
 export PATH="$HOME/.local/bin:$PATH"
 
-if ! command -v npm &> /dev/null || [ "$(node -v 2>/dev/null | cut -d'.' -f1 | tr -d 'v')" -lt 22 ]; then
-  echo "Node.js >= 22 not found. Installing portable Node into ~/.local..."
+# Minimum required major version (Caveman engine baseline)
+MIN_NODE_MAJOR=22
 
-  ARCH="x64"
-  if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
+# Detect container system architecture
+ARCH="x64"
+case "$(uname -m)" in
+  aarch64|arm64) ARCH="arm64" ;;
+  x86_64)        ARCH="x64" ;;
+esac
 
-  NODE_VER="v22.14.0"
-  NODE_URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.gz"
-
-  mkdir -p "$HOME/.local/lib" "$HOME/.local/bin"
-  curl -fsSL "$NODE_URL" | tar -xz -C "$HOME/.local/lib"
-
-  # Link node, npm, and npx to ~/.local/bin
-  ln -sf "$HOME/.local/lib/node-${NODE_VER}-linux-${ARCH}/bin/"* "$HOME/.local/bin/"
-
-  # Ensure future interactive terminal sessions inherit the PATH
-  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
-  if [ -f "$HOME/.zshrc" ]; then
-    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
-  fi
+# Check existing Node.js installation (if present)
+CURRENT_NODE_MAJOR=0
+if command -v node &> /dev/null; then
+  CURRENT_NODE_MAJOR=$(node -v 2>/dev/null | tr -d 'v' | cut -d'.' -f1)
 fi
 
-# Set npm global prefix to ~/.local so global packages don't require sudo
+# If Node is missing or older than the required minimum, install/update to latest LTS
+if [ "$CURRENT_NODE_MAJOR" -lt "$MIN_NODE_MAJOR" ]; then
+  echo "Node.js >= ${MIN_NODE_MAJOR} not detected. Resolving latest LTS..."
+
+  # Query official Node.js release index for the newest LTS version (tab-delimited, no jq needed)
+  LATEST_LTS=$(curl -fsSL https://nodejs.org/download/release/index.tab 2>/dev/null | \
+    awk 'NR>1 && $NF!="-" {print $1; exit}')
+
+  # Safe fallback if network query times out or fails
+  NODE_VER="${LATEST_LTS:-v22.14.0}"
+  NODE_URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.gz"
+
+  echo "Installing Node.js ${NODE_VER} (${ARCH}) to ~/.local..."
+
+  # Create clean installation directory
+  NODE_DIR="$HOME/.local/lib/nodejs"
+  mkdir -p "$NODE_DIR" "$HOME/.local/bin"
+
+  # Stream, extract, and strip top-level folder so path is version-agnostic
+  curl -fsSL "$NODE_URL" | tar -xz -C "$NODE_DIR" --strip-components=1
+
+  # Create persistent symlinks to ~/.local/bin
+  ln -sf "$NODE_DIR/bin/"* "$HOME/.local/bin/"
+
+  # Ensure interactive subshells and new container terminals retain PATH
+  for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
+    if [ -f "$rc" ] && ! grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$rc"; then
+      echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc"
+    fi
+  done
+fi
+
+# Configure npm prefix so global installs write to ~/.local without requiring root/sudo
 export npm_config_prefix="$HOME/.local"
 
-# Install Trail-Code and Caveman CLIs
-npm install -g --silent @trailhq/trail-code @caveman-ai/cli 2>/dev/null || true
+# Install or update Trail-Code and Caveman to the latest available releases
+if command -v npm &> /dev/null; then
+  if npm install -g --silent @trailhq/trail-code@latest @caveman-ai/cli@latest 2>/dev/null; then
+    echo "Trail-Code and Caveman installed successfully."
+  else
+    echo "Error: Failed to install Trail-Code and Caveman packages via npm." >&2
+  fi
+else
+  echo "Error: npm not found in PATH. Trail-Code and Caveman failed to install." >&2
+fi
 
 # ------------------------------------------------------------------------------
 # 4. Workspace Injection, Copilot Slash-Prompt Mapping & Graft Indexing
