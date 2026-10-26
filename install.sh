@@ -53,10 +53,35 @@ EOF
 # 3. Runtime CLI Installation (Trail-Code / Graft & Caveman Engine)
 # Installs the global npm packages for MCP servers and codebase graph indexing.
 # ------------------------------------------------------------------------------
-if command -v npm &> /dev/null; then
-  npm install -g --silent @trailhq/trail-code @caveman-ai/cli 2>/dev/null || \
-  sudo npm install -g --silent @trailhq/trail-code @caveman-ai/cli 2>/dev/null || true
+export PATH="$HOME/.local/bin:$PATH"
+
+if ! command -v npm &> /dev/null || [ "$(node -v 2>/dev/null | cut -d'.' -f1 | tr -d 'v')" -lt 22 ]; then
+  echo "Node.js >= 22 not found. Installing portable Node into ~/.local..."
+
+  ARCH="x64"
+  if [ "$(uname -m)" = "aarch64" ]; then ARCH="arm64"; fi
+
+  NODE_VER="v22.14.0"
+  NODE_URL="https://nodejs.org/dist/${NODE_VER}/node-${NODE_VER}-linux-${ARCH}.tar.gz"
+
+  mkdir -p "$HOME/.local/lib" "$HOME/.local/bin"
+  curl -fsSL "$NODE_URL" | tar -xz -C "$HOME/.local/lib"
+
+  # Link node, npm, and npx to ~/.local/bin
+  ln -sf "$HOME/.local/lib/node-${NODE_VER}-linux-${ARCH}/bin/"* "$HOME/.local/bin/"
+
+  # Ensure future interactive terminal sessions inherit the PATH
+  echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+  if [ -f "$HOME/.zshrc" ]; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zshrc"
+  fi
 fi
+
+# Set npm global prefix to ~/.local so global packages don't require sudo
+export npm_config_prefix="$HOME/.local"
+
+# Install Trail-Code and Caveman CLIs
+npm install -g --silent @trailhq/trail-code @caveman-ai/cli 2>/dev/null || true
 
 # ------------------------------------------------------------------------------
 # 4. Workspace Injection, Copilot Slash-Prompt Mapping & Graft Indexing
